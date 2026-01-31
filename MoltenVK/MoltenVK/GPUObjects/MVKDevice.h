@@ -1167,6 +1167,9 @@ public:
 	/** Pointer to the memory properties of the underlying physical device. */
 	const VkPhysicalDeviceMemoryProperties& getDeviceMemoryProperties() const { return _device->_physicalDevice->_memoryProperties; }
 
+	/** Pointer to the texel buffer alignment properties of the underyling physical device. */
+	const VkPhysicalDeviceTexelBufferAlignmentPropertiesEXT& getTexelBufferAlignmentProperties() { return _device->_physicalDevice->_texelBuffAlignProperties; }
+
 	/** Performance statistics. */
 	MVKPerformanceStatistics& getPerformanceStats() { return _device->_performanceStats; }
 

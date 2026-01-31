@@ -290,6 +290,13 @@ MVKInstance::MVKInstance(const VkInstanceCreateInfo* pCreateInfo) : _enabledExte
         _appInfo.apiVersion = MVK_VULKAN_API_VERSION;
     }
 
+	_engine = EngineID::Unknown;
+	if (_appInfo.pEngineName) {
+		if (0 == strcmp(_appInfo.pEngineName, "ANGLE")) {
+			_engine = EngineID::Angle;
+		}
+	}
+
 	// Enable extensions before setting config or proc addrs.
 	setConfigurationResult(verifyLayers(pCreateInfo->enabledLayerCount, pCreateInfo->ppEnabledLayerNames));
 	MVKExtensionList* pWritableExtns = (MVKExtensionList*)&_enabledExtensions;

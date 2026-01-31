@@ -201,6 +201,12 @@ public:
 	 */
 	virtual VkResult exportFd(VkExternalSemaphoreHandleTypeFlagBits handleType, int *pFd) { return VK_ERROR_FEATURE_NOT_PRESENT; };
 
+	/** Encodes an operation to block command buffer operation until this semaphore is signaled. */
+	void encodeWait(id<MTLCommandBuffer> cmdBuff) { encodeWait(cmdBuff, 0); }
+
+	/** Encodes an operation to signal the semaphore. */
+	void encodeSignal(id<MTLCommandBuffer> cmdBuff) { encodeSignal(cmdBuff, 0); }
+
 #pragma mark Construction
 
     MVKSemaphore(MVKDevice* device, const VkSemaphoreCreateInfo* pCreateInfo) : MVKVulkanAPIDeviceObject(device) {}
@@ -286,6 +292,8 @@ public:
 
 protected:
 	MVKSemaphoreImpl _blocker;
+	id<MTLEvent> _mtlEvent;
+	std::atomic<uint64_t> _mtlEventValue;
 };
 
 

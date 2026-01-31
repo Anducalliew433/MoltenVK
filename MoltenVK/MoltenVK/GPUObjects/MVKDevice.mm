@@ -2406,6 +2406,10 @@ void MVKPhysicalDevice::initMTLDevice() {
 
 #if !MVK_MACCAT
 	if ([_mtlDevice respondsToSelector: @selector(setShouldMaximizeConcurrentCompilation:)]) {
+		// On macOS 26 (at least the initial release), setShouldMaximizeConcurrentCompilation:YES crashes for AMD GPUs
+		if (mvkOSVersionIsAtLeast(16.0) && !_gpuCapabilities.isAppleGPU)
+			return;
+
 		[_mtlDevice setShouldMaximizeConcurrentCompilation: getMVKConfig().shouldMaximizeConcurrentCompilation];
 		MVKLogInfoIf(getMVKConfig().debugMode, "maximumConcurrentCompilationTaskCount %lu", _mtlDevice.maximumConcurrentCompilationTaskCount);
 	}
@@ -2453,6 +2457,9 @@ void MVKPhysicalDevice::initMetalFeatures() {
 	switch (_properties.vendorID) {
 		case kAMDVendorId:
 			_metalFeatures.clearColorFloatRounding = MVK_FLOAT_ROUNDING_DOWN;
+			// Test case: kernel void test(constant uint4 &a, device uint* b) { b[0] = (~a.y & a.x) | !a.z; }
+			// Tested on macOS 10.13, 13, and 14, on AMD Polaris and RDNA GPUs.
+			_metalFeatures.bitwiseNotCausesICE = true;
 			break;
 		case kAppleVendorId:
 			// TODO: Other GPUs?

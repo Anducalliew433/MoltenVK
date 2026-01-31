@@ -155,7 +155,9 @@ typedef struct {
 	VkBool32 dynamicVertexStride;					/**< If true, VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE is supported. */
 	VkBool32 needsCubeGradWorkaround;				/**< If true, sampling from cube textures with explicit gradients is broken and needs a workaround. */
 	VkBool32 nativeTextureAtomics;                  /**< If true, atomic operations on textures are supported natively. */
+	VkBool32 bitwiseNotCausesICE;               	/**< If true, using a bitwise not in a shader may crash the shader compiler, requiring a workaround. */
 	VkBool32 needsArgumentBufferEncoders;			/**< If true, Metal argument buffer encoders are needed to populate argument buffer content. */
+	VkBool32 emulatedTexelBufferAlignment;          /**< If true, the device doesn't natively support single texel alignment, but claims support for it and emulates it in the shader */
     VkBool32 residencySets;                         /**< If true, the device supports creating residency sets. */
     VkBool32 subgroupUniformControlFlow;            /**< If true, subgroup invocations will reconverge if they were uniform upon entry to a block and exit via the corresponding merge block. */
     VkBool32 maximalReconvergence;                  /**< If true, shader invocations that diverge will reconverge as soon as possible. */
