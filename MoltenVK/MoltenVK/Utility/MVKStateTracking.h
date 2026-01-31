@@ -170,6 +170,7 @@ enum class MVKNonVolatileImplicitBuffer : uint32_t {
 	PushConstant,
 	BufferSize,
 	DynamicOffset,
+	TextureOffset,
 	ViewRange,
 	Count
 };
@@ -178,6 +179,7 @@ enum class MVKImplicitBuffer : uint32_t {
 	PushConstant  = static_cast<uint32_t>(MVKNonVolatileImplicitBuffer::PushConstant),
 	BufferSize    = static_cast<uint32_t>(MVKNonVolatileImplicitBuffer::BufferSize),
 	DynamicOffset = static_cast<uint32_t>(MVKNonVolatileImplicitBuffer::DynamicOffset),
+	TextureOffset = static_cast<uint32_t>(MVKNonVolatileImplicitBuffer::TextureOffset),
 	ViewRange     = static_cast<uint32_t>(MVKNonVolatileImplicitBuffer::ViewRange),
 
 	// Volatile implicit buffers

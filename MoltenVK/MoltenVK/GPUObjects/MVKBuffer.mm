@@ -256,6 +256,11 @@ void MVKBufferView::propagateDebugName() {
 
 #pragma mark Metal
 
+static VkDeviceSize getTextureBufferOffsetMask(const VkPhysicalDeviceTexelBufferAlignmentPropertiesEXT& props) {
+	VkDeviceSize maxAlign = std::max(props.storageTexelBufferOffsetAlignmentBytes, props.uniformTexelBufferOffsetAlignmentBytes);
+	return maxAlign - 1;
+}
+
 id<MTLTexture> MVKBufferView::getMTLTexture() {
 	if (!_mtlTexture && _mtlPixelFormat) {
 
@@ -271,15 +276,19 @@ id<MTLTexture> MVKBufferView::getMTLTexture() {
 		}
 		id<MTLBuffer> mtlBuff = _buffer->getMTLBuffer();
 		VkDeviceSize mtlBuffOffset = _buffer->getMTLBufferOffset() + _offset;
+		if (getMetalFeatures().emulatedTexelBufferAlignment) {
+			VkDeviceSize mask = getTextureBufferOffsetMask(getTexelBufferAlignmentProperties());
+			MVKAssert(((_buffer->getMTLBufferOffset() + _offset) & mask) == 0, "Metal buffer base offset wasn't aligned!");
+		}
 		@autoreleasepool {
 			MTLResourceOptions opts = (mtlBuff.cpuCacheMode << MTLResourceCPUCacheModeShift) | (mtlBuff.storageMode << MTLResourceStorageModeShift);
 			MTLTextureDescriptor* mtlTexDesc = [MTLTextureDescriptor textureBufferDescriptorWithPixelFormat: _mtlPixelFormat
-				                                                                                      width: _textureSize.width
+				                                                                                      width: _textureSize.width + _textureOffset
 				                                                                            resourceOptions: opts
 				                                                                                      usage: usage];
 			id<MTLTexture> tex = [mtlBuff newTextureWithDescriptor: mtlTexDesc
 			                                                offset: mtlBuffOffset
-			                                           bytesPerRow: _mtlBytesPerRow];
+			                                           bytesPerRow: _mtlBytesPerRow + _textureOffset * _bytesPerPixel];
 			_device->makeResident(tex);
 			_device->getLiveResources().add(tex);
 			_mtlTexture = tex;
@@ -299,7 +308,22 @@ MVKBufferView::MVKBufferView(MVKDevice* device, const VkBufferViewCreateInfo* pC
     _mtlPixelFormat = pixFmts->getMTLPixelFormat(pCreateInfo->format);
     VkExtent2D fmtBlockSize = pixFmts->getBlockTexelSize(pCreateInfo->format);  // Pixel size of format
     size_t bytesPerBlock = pixFmts->getBytesPerBlock(pCreateInfo->format);
+	_bytesPerPixel = static_cast<uint32_t>(bytesPerBlock);
 	_mtlTexture = nil;
+	auto& mtlFeats = getMetalFeatures();
+
+	if (mtlFeats.emulatedTexelBufferAlignment) {
+		VkDeviceSize mask = getTextureBufferOffsetMask(getTexelBufferAlignmentProperties());
+		size_t offset = _offset & mask;
+		// Bytes per pixel can be a non power of two (e.g. 12 for RGB32), which means just masking may cut off part of a pixel
+		// In that case, try to increase the size of the offset until we land on a pixel boundary
+		while (offset % _bytesPerPixel && offset < _bytesPerPixel * mask)
+			offset += (mask + 1);
+		if (offset > _offset)
+			offset = _offset;
+		_textureOffset = static_cast<uint32_t>(offset / _bytesPerPixel);
+		_offset -= offset;
+	}
 
 	_usage = _buffer->getUsage();
 	for (const auto* next = (VkBaseInStructure*)pCreateInfo->pNext; next; next = next->pNext) {

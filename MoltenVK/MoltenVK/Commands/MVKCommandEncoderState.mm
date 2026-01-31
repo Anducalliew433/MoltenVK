@@ -272,6 +272,7 @@ static uint32_t getCPUMetaOffset(MVKDescriptorCPULayout layout) {
 
 enum class ImplicitBufferData {
 	BufferSize,
+	TextureOffset,
 };
 
 static bool isTexelBuffer(VkDescriptorType type) {
@@ -311,7 +312,8 @@ static void bindImplicitBufferData(uint32_t* target, MVKDescriptorSetLayout* lay
 		}
 		uint32_t perDescCount;
 		switch (DataType) {
-			case ImplicitBufferData::BufferSize:     perDescCount = binding.perDescriptorResourceCount.buffer;  break;
+			case ImplicitBufferData::BufferSize:     perDescCount = binding.perDescriptorResourceCount.buffer;         break;
+			case ImplicitBufferData::TextureOffset:  perDescCount = binding.perDescriptorResourceCount.textureOffset;  break;
 		}
 		if (perDescCount == 0)
 			continue;
@@ -332,6 +334,12 @@ static void bindImplicitBufferData(uint32_t* target, MVKDescriptorSetLayout* lay
 							target[i] = reinterpret_cast<const MVKDescriptorMetaImage*>(base)->size;
 						else
 							target[i] = reinterpret_cast<const MVKDescriptorMetaBuffer*>(base)->size;
+						break;
+					case ImplicitBufferData::TextureOffset:
+						if (isTexelBuffer(binding.descriptorType))
+							target[i] = reinterpret_cast<const MVKDescriptorMetaTexelBuffer*>(base)->offset;
+						else
+							target[i] = 0;
 						break;
 				}
 			}
@@ -396,6 +404,10 @@ static void bindDescriptorSets(MVKImplicitBufferData& target,
 			if (stride.bufferIndex) {
 				mvkEnsureSize(target.bufferSizes, offsets.bufferIndex + stride.bufferIndex);
 				bindImplicitBufferData<ImplicitBufferData::BufferSize>(&target.bufferSizes[offsets.bufferIndex], setLayout, set->cpuBuffer, vkStage, varCount);
+			}
+			if (stride.textureOffsetBufferIndex) {
+				mvkEnsureSize(target.textureOffsets, offsets.textureOffsetBufferIndex + stride.textureOffsetBufferIndex);
+				bindImplicitBufferData<ImplicitBufferData::TextureOffset>(&target.textureOffsets[offsets.textureOffsetBufferIndex], setLayout, set->cpuBuffer, vkStage, varCount);
 			}
 		}
 	}
@@ -713,6 +725,9 @@ static void bindMetalResources(id<MTLCommandEncoder> encoder,
 			case MVKNonVolatileImplicitBuffer::DynamicOffset:
 				bindImmediateData(encoder, mvkEncoder, getImplicitBindingData(implicitBufferData.dynamicOffsets, resourceCounts.dynamicOffsetBufferIndex), idx, binder);
 				break;
+			case MVKNonVolatileImplicitBuffer::TextureOffset:
+				bindImmediateData(encoder, mvkEncoder, getImplicitBindingData(implicitBufferData.textureOffsets, resourceCounts.textureOffsetBufferIndex), idx, binder);
+				break;
 			case MVKNonVolatileImplicitBuffer::ViewRange: {
 				uint32_t viewRange[] = {
 					mvkEncoder.getSubpass()->getFirstViewIndexInMetalPass(mvkEncoder.getMultiviewPassIndex()),
@@ -912,6 +927,7 @@ template <typename MTLState>
 static void invalidateDescriptorSetImplicitBuffers(MTLState& state) {
 	invalidateImplicitBuffer(state, MVKNonVolatileImplicitBuffer::BufferSize);
 	invalidateImplicitBuffer(state, MVKNonVolatileImplicitBuffer::DynamicOffset);
+	invalidateImplicitBuffer(state, MVKNonVolatileImplicitBuffer::TextureOffset);
 }
 
 static bool isGraphicsStage(MVKShaderStage stage) {

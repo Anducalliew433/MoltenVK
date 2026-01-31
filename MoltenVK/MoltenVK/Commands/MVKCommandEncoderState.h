@@ -123,6 +123,7 @@ struct MVKVulkanSharedCommandEncoderState {
 struct MVKImplicitBufferData {
 	MVKSmallVector<uint32_t, 8> bufferSizes;
 	MVKSmallVector<uint32_t, 8> dynamicOffsets;
+	MVKSmallVector<uint32_t, 8> textureOffsets;
 };
 
 enum class MVKResourceUsageStages : uint8_t {

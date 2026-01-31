@@ -39,6 +39,7 @@ struct MVKShaderStageResourceBinding {
 	uint32_t textureIndex = 0;
 	uint32_t samplerIndex = 0;
 	uint32_t dynamicOffsetBufferIndex = 0;
+	uint32_t textureOffsetBufferIndex = 0;
 
 	MVKShaderStageResourceBinding operator+(const MVKShaderStageResourceBinding& rhs) const { auto tmp = *this; tmp += rhs; return tmp; }
 	MVKShaderStageResourceBinding& operator+=(const MVKShaderStageResourceBinding& rhs) {
@@ -46,6 +47,7 @@ struct MVKShaderStageResourceBinding {
 		textureIndex += rhs.textureIndex;
 		samplerIndex += rhs.samplerIndex;
 		dynamicOffsetBufferIndex += rhs.dynamicOffsetBufferIndex;
+		textureOffsetBufferIndex += rhs.textureOffsetBufferIndex;
 		return *this;
 	}
 	void clearArgumentBufferResources() {
@@ -123,6 +125,7 @@ struct MVKDescriptorResourceCount {
 	uint8_t buffer : 1;
 	uint8_t sampler : 1;
 	uint8_t dynamicOffset : 1;
+	uint8_t textureOffset : 1;
 
 	MVKShaderStageResourceBinding operator*(uint32_t count) const {
 		MVKShaderStageResourceBinding res;
@@ -130,6 +133,7 @@ struct MVKDescriptorResourceCount {
 		res.bufferIndex = buffer * count;
 		res.samplerIndex = sampler * count;
 		res.dynamicOffsetBufferIndex = dynamicOffset * count;
+		res.textureOffsetBufferIndex = textureOffset * count;
 		return res;
 	}
 };
@@ -146,9 +150,9 @@ static_assert(sizeof(MVKDescriptorMetaImage) == sizeof(uint64_t));
 /** Descriptor metadata for texel buffers. */
 struct MVKDescriptorMetaTexelBuffer {
 	uint32_t size;
-	uint32_t pad;
+	uint32_t offset;
 	MVKDescriptorMetaTexelBuffer() = default;
-	constexpr MVKDescriptorMetaTexelBuffer(uint32_t size_): size(size_), pad(0) {}
+	constexpr MVKDescriptorMetaTexelBuffer(uint32_t size_, uint32_t offset_): size(size_), offset(offset_) {}
 };
 static_assert(sizeof(MVKDescriptorMetaTexelBuffer) == sizeof(uint64_t));
 

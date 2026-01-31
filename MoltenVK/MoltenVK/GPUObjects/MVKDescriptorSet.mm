@@ -259,6 +259,9 @@ static ImmutableSamplerPlaneInfo getPlaneCount(const MVKDescriptorBinding& bindi
 static MVKDescriptorResourceCount perDescriptorResourceCount(VkDescriptorType type, MVKDescriptorGPULayout argBufLayout, MVKArgumentBufferMode argBuf, MVKDevice* dev, ImmutableSamplerPlaneInfo planes) {
 	MVKDescriptorResourceCount count = {};
 	count.dynamicOffset = needsDynamicOffset(type);
+	if (dev->getPhysicalDevice()->getMetalFeatures()->emulatedTexelBufferAlignment && (type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER || type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER)) {
+		count.textureOffset = 1;
+	}
 	if (argBuf != MVKArgumentBufferMode::Off) {
 		switch (argBufLayout) {
 			case MVKDescriptorGPULayout::None:
@@ -1311,7 +1314,7 @@ static void writeDescriptorSetCPUBuffer(
 							desc->a = tex;
 							desc->b = [tex buffer];
 							desc->offset = [tex bufferOffset];
-							desc->meta.texel = static_cast<uint32_t>([tex height] * [tex bufferBytesPerRow]);
+							desc->meta.texel = { static_cast<uint32_t>([tex height] * [tex bufferBytesPerRow]), img->getTextureOffset() };
 						} else {
 							*desc = {};
 						}

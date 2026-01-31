@@ -2760,6 +2760,7 @@ void MVKPhysicalDevice::initFeatures() {
     _features.robustBufferAccess = true; // NOTE: Required by spec, not fully supported by non-Apple GPUs.
     _features.fullDrawIndexUint32 = true;
     _features.independentBlend = true;
+    _features.geometryShader = true;  // XXX Required by DXVK for D3D10
     _features.sampleRateShading = true;
 	_features.logicOp = getMVKConfig().useMetalPrivateAPI;
     _features.depthBiasClamp = true;
@@ -2775,6 +2776,7 @@ void MVKPhysicalDevice::initFeatures() {
     _features.shaderUniformBufferArrayDynamicIndexing = true;
     _features.shaderStorageBufferArrayDynamicIndexing = true;
     _features.shaderClipDistance = true;
+    _features.shaderCullDistance = true;  // XXX Required by DXVK for 10level9
     _features.shaderInt16 = true;
     _features.multiDrawIndirect = true;
     _features.inheritedQueries = true;
@@ -2979,6 +2981,16 @@ void MVKPhysicalDevice::initLimits() {
         }
         return true;
     });
+    const MVKConfiguration& config = getMVKConfig();
+    if (config.emulateSingleTexelAlignment && _metalFeatures.textureBuffers && (!singleTexelStorage || !singleTexelUniform)) {
+        if (config.useMetalArgumentBuffers) {
+            MVKLogWarn("Texture buffer single texel alignment emulation is currently incompatible with argument buffers, disabling.");
+        } else {
+            _metalFeatures.emulatedTexelBufferAlignment = true;
+            singleTexelStorage = true;
+            singleTexelUniform = true;
+        }
+    }
     _texelBuffAlignProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXEL_BUFFER_ALIGNMENT_PROPERTIES;
     _texelBuffAlignProperties.storageTexelBufferOffsetAlignmentBytes = maxStorage;
     _texelBuffAlignProperties.storageTexelBufferOffsetSingleTexelAlignment = singleTexelStorage;
