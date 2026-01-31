@@ -45,6 +45,31 @@ typedef struct MVKIndexMTLBufferBinding {
     uint8_t mtlIndexType = 0;		// MTLIndexType
 } MVKIndexMTLBufferBinding;
 
+/** Describes a MTLBuffer resource binding for transform feedback. */
+typedef struct MVKMTLBufferBinding {
+    union { id<MTLBuffer> mtlBuffer = nil; id<MTLBuffer> mtlResource; const void* mtlBytes; }; // aliases
+    VkDeviceSize offset = 0;
+    uint32_t size = 0;
+    uint32_t stride = 0;
+    uint16_t index = 0;
+    bool justOffset = false;
+    bool isDirty = true;
+    bool isInline = false;
+
+    void markDirty() { isDirty = true; }
+
+    void update(const MVKMTLBufferBinding& other) {
+        if (mtlBuffer != other.mtlBuffer || offset != other.offset ||
+            size != other.size || stride != other.stride) {
+            mtlBuffer = other.mtlBuffer;
+            offset = other.offset;
+            size = other.size;
+            stride = other.stride;
+            isDirty = true;
+        }
+    }
+} MVKMTLBufferBinding;
+
 /** Concise and consistent structure for holding pipeline barrier info. */
 typedef struct MVKPipelineBarrier {
 

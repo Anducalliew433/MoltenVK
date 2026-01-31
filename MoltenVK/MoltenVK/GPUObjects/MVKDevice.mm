@@ -784,6 +784,12 @@ void MVKPhysicalDevice::getFeatures(VkPhysicalDeviceFeatures2* features) {
 				shaderIntFuncsFeatures->shaderIntegerFunctions2 = true;
 				break;
 			}
+			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT: {
+				auto* transformFeedbackFeatures = (VkPhysicalDeviceTransformFeedbackFeaturesEXT*)next;
+				transformFeedbackFeatures->transformFeedback = true;
+				transformFeedbackFeatures->geometryStreams = false;
+				break;
+			}
 			default:
 				break;
 		}
@@ -1300,6 +1306,13 @@ void MVKPhysicalDevice::getProperties(VkPhysicalDeviceProperties2* properties) {
 				// VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT is different than the promoted VkPhysicalDeviceVertexAttributeDivisorProperties.
 				auto* divisorProps = (VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT*)next;
 				divisorProps->maxVertexAttribDivisor = supportedProps14.maxVertexAttribDivisor;
+				break;
+			}
+			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT: {
+				// Incomplete!
+				auto* xfbProps = (VkPhysicalDeviceTransformFeedbackPropertiesEXT*)next;
+				xfbProps->maxTransformFeedbackBuffers = 1;
+				xfbProps->maxTransformFeedbackStreams = 1;
 				break;
 			}
 			default:
