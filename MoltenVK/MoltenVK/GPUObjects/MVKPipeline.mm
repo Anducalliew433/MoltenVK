@@ -2880,6 +2880,8 @@ namespace SPIRV_CROSS_NAMESPACE {
 				opt.shader_input_buffer_index,
 				opt.shader_index_buffer_index,
 				opt.shader_patch_input_buffer_index,
+				opt.draw_info_index,
+				opt.xfb_buffer_index,
 				opt.shader_input_wg_index,
 				opt.device_index,
 				opt.enable_frag_output_mask,
@@ -2933,7 +2935,8 @@ namespace SPIRV_CROSS_NAMESPACE {
 				opt.auto_disable_rasterization,
 				opt.use_fast_math_pragmas,
 				opt.robust_buffer_access2,
-				opt.robust_image_access2);
+				opt.robust_image_access2,
+				opt.for_mesh_pipeline);
 	}
 
 	template<class Archive>
@@ -2943,7 +2946,11 @@ namespace SPIRV_CROSS_NAMESPACE {
 				si.format,
 				si.builtin,
 				si.vecsize,
-				si.rate);
+				si.rate,
+				si.offset,
+				si.stride,
+				si.binding,
+				si.normalized);
 	}
 
 	template<class Archive>
@@ -3062,9 +3069,11 @@ namespace mvk {
 				scr.needsPatchOutputBuffer,
 				scr.needsBufferSizeBuffer,
 				scr.needsDynamicOffsetBuffer,
+				scr.needsTextureOffsetBuffer,
 				scr.needsInputThreadgroupMem,
 				scr.needsDispatchBaseBuffer,
 				scr.needsViewRangeBuffer,
+				scr.needsXfbBuffer,
 				scr.usesPhysicalStorageBufferAddressesCapability);
 	}
 
@@ -3211,18 +3220,18 @@ static size_t mvkValidateCerealArchiveSize(size_t padByteCnt = 0) {
 
 void mvkValidateCeralArchiveDefinitions() {
 	[[maybe_unused]] size_t missingBytes = 0;
-	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(6);
-	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLShaderInterfaceVariable>();
+	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(9);
+	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLShaderInterfaceVariable>(3);
 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLResourceBinding>();
 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLConstexprSampler>();
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVWorkgroupSizeDimension>(3);
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVEntryPoint>(20);						// Contains string
-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(28);			// Contains string
-	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLShaderInterfaceVariable>(3);
+	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(27);			// Contains string
+	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLShaderInterfaceVariable>(6);
 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLResourceBinding>(2);
 	missingBytes += mvkValidateCerealArchiveSize<mvk::DescriptorBinding>();
-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(108);	// Contains collection
-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionResultInfo>(42);		// Contains collection
+	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(107);	// Contains collection
+	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionResultInfo>(40);		// Contains collection
 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLSpecializationMacroInfo>(22);			// Contains string
 	missingBytes += mvkValidateCerealArchiveSize<MVKShaderModuleKey>();
 	missingBytes += mvkValidateCerealArchiveSize<MVKCompressor<std::string>>(20);				// Contains collection

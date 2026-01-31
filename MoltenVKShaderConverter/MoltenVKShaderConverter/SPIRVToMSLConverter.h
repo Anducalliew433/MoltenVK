@@ -256,9 +256,11 @@ namespace mvk {
 		bool needsPatchOutputBuffer = false;
 		bool needsBufferSizeBuffer = false;
 		bool needsDynamicOffsetBuffer = false;
+		bool needsTextureOffsetBuffer = false;
 		bool needsInputThreadgroupMem = false;
 		bool needsDispatchBaseBuffer = false;
 		bool needsViewRangeBuffer = false;
+		bool needsXfbBuffer = false;
 		bool usesPhysicalStorageBufferAddressesCapability = false;
 		std::map<uint32_t, MSLSpecializationMacroInfo> specializationMacros;
 
