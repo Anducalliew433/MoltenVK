@@ -813,6 +813,22 @@ void MVKCommandEncoder::beginMetalRenderPass(MVKCommandUse cmdUse) {
         } else {
 			renderTargetArrayLength = getFramebufferLayerCount();
         }
+
+        // Clamp excessive array length if no attachments are present to avoid OOM.
+        // When no attachments exist, Metal still allocates internal tile control structures
+        // proportional to (width × height × arrayLength). With extreme values like
+        // 16384×16384×2048, this can exhaust GPU memory causing Internal Error (00000106).
+        // The threshold of 256 layers is conservative, allowing reasonable layered rendering
+        // for side-effect passes while preventing catastrophic allocations.
+        // We use found2D/found3D which already checked all 8 color attachment slots above.
+        bool hasAnyColorAttachment = found2D || found3D;
+        if (renderTargetArrayLength > 256 &&
+            !hasAnyColorAttachment &&
+            mtlRPDesc.depthAttachment.texture == nil &&
+            mtlRPDesc.stencilAttachment.texture == nil) {
+            renderTargetArrayLength = 1;
+        }
+
         // Metal does not allow layered render passes where some RTs are 3D and others are 2D.
         if (!(found3D && found2D) || renderTargetArrayLength > 1) {
             mtlRPDesc.renderTargetArrayLength = renderTargetArrayLength;
