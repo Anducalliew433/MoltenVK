@@ -42,9 +42,15 @@ VkResult MVKCmdBindVertexBuffers<N>::setContent(MVKCommandBuffer* cmdBuff,
     MVKVertexMTLBufferBinding b;
     for (uint32_t bindIdx = 0; bindIdx < bindingCount; bindIdx++) {
         MVKBuffer* mvkBuffer = (MVKBuffer*)pBuffers[bindIdx];
-        b.mtlBuffer = mvkBuffer->getMTLBuffer();
-        b.offset = mvkBuffer->getMTLBufferOffset() + pOffsets[bindIdx];
-		b.size = pSizes ? uint32_t(pSizes[bindIdx] == VK_WHOLE_SIZE ? mvkBuffer->getByteCount() - pOffsets[bindIdx] : pSizes[bindIdx]) : 0;
+        if (mvkBuffer) {
+            b.mtlBuffer = mvkBuffer->getMTLBuffer();
+            b.offset = mvkBuffer->getMTLBufferOffset() + pOffsets[bindIdx];
+            b.size = pSizes ? uint32_t(pSizes[bindIdx] == VK_WHOLE_SIZE ? mvkBuffer->getByteCount() - pOffsets[bindIdx] : pSizes[bindIdx]) : 0;
+        } else {
+            b.mtlBuffer = nullptr;
+            b.offset = 0;
+            b.size = 0;
+        }
 		b.stride = pStrides ? (uint32_t)pStrides[bindIdx] : 0;
         _bindings.push_back(b);
     }
@@ -445,9 +451,41 @@ void MVKCmdDrawIndexed::encode(MVKCommandEncoder* cmdEncoder) {
 	MVKPiplineStages stages;
     pipeline->getStages(stages);
 
-    const MVKIndexMTLBufferBinding& ibb = cmdEncoder->getVkGraphics()._indexBuffer;
+    MVKIndexMTLBufferBinding ibb = cmdEncoder->getVkGraphics()._indexBuffer;
     size_t idxSize = mvkMTLIndexTypeSizeInBytes((MTLIndexType)ibb.mtlIndexType);
-    VkDeviceSize idxBuffOffset = ibb.offset + (_firstIndex * idxSize);
+    VkDeviceSize idxBuffOffset = ibb.offset + ((VkDeviceSize)_firstIndex * idxSize);
+
+    // For robust buffer access 2, handle OOB index buffer access
+    if (cmdEncoder->getEnabledRobustness2Features().robustBufferAccess2 && ibb.size > 0) {
+        VkDeviceSize firstIndexBytes = (VkDeviceSize)_firstIndex * idxSize;
+        VkDeviceSize lastIndexBytes = (VkDeviceSize)(_firstIndex + _indexCount) * idxSize;
+
+        if (firstIndexBytes >= ibb.size) {
+            // All indices are OOB - create a zeroed index buffer so all reads return index 0
+            auto* zeroIdxBuff = cmdEncoder->getTempMTLBuffer(idxSize * _indexCount);
+            memset(zeroIdxBuff->getContents(), 0, idxSize * _indexCount);
+            ibb.mtlBuffer = zeroIdxBuff->_mtlBuffer;
+            idxBuffOffset = zeroIdxBuff->_offset;
+        } else if (lastIndexBytes > ibb.size) {
+            // Some indices are OOB - create a new buffer with valid indices copied and OOB indices zeroed
+            auto* newIdxBuff = cmdEncoder->getTempMTLBuffer(idxSize * _indexCount);
+            uint8_t* dst = (uint8_t*)newIdxBuff->getContents();
+
+            // Calculate how many indices are valid (within the bound size)
+            VkDeviceSize validBytes = ibb.size - firstIndexBytes;
+
+            // Copy valid indices from original buffer
+			if (ibb.mtlBuffer.storageMode != MTLStorageModePrivate) {
+				memcpy(dst, (uint8_t*)ibb.mtlBuffer.contents + ibb.offset + firstIndexBytes, validBytes);
+				memset(dst + validBytes, 0, (idxSize * _indexCount) - validBytes);
+			} else {
+				memset(dst, 0, idxSize * _indexCount);
+			}
+
+            ibb.mtlBuffer = newIdxBuff->_mtlBuffer;
+            idxBuffOffset = newIdxBuff->_offset;
+        }
+    }
 
     const MVKMTLBufferAllocation* vtxOutBuff = nullptr;
     const MVKMTLBufferAllocation* tcOutBuff = nullptr;

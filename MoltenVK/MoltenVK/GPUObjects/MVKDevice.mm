@@ -626,9 +626,9 @@ void MVKPhysicalDevice::getFeatures(VkPhysicalDeviceFeatures2* features) {
 			}
 			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_KHR: {
 				auto* robustness2Features = (VkPhysicalDeviceRobustness2FeaturesKHR*)next;
-				robustness2Features->robustBufferAccess2 = false;
+				robustness2Features->robustBufferAccess2 = _gpuCapabilities.isAppleGPU;
 				robustness2Features->robustImageAccess2 = _gpuCapabilities.isAppleGPU;
-				robustness2Features->nullDescriptor = false;
+				robustness2Features->nullDescriptor = _gpuCapabilities.isAppleGPU;
 				break;
 			}
 			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FMA_FEATURES_KHR: {

@@ -340,6 +340,25 @@ static void bindImplicitBufferData(uint32_t* target, MVKDescriptorSetLayout* lay
 	}
 }
 
+// Helper to update implicit buffer data (buffer sizes) after push descriptor update
+static void bindPushDescriptorBufferSizes(MVKImplicitBufferData& target,
+										  MVKShaderStage stage,
+										  MVKPipelineLayout* layout,
+										  uint32_t set,
+										  MVKDescriptorSet* pushDesc) {
+	VkShaderStageFlags vkStage = mvkVkShaderStageFlagBitsFromMVKShaderStage(stage);
+	MVKDescriptorSetLayout* setLayout = layout->getDescriptorSetLayout(set);
+	const MVKShaderStageResourceBinding& offsets = layout->getResourceBindingOffsets(set).stages[stage];
+	const MVKShaderStageResourceBinding& stride = setLayout->totalResourceCount().stages[stage];
+	uint32_t varCount = pushDesc->variableDescriptorCount;
+	if (setLayout->argBufMode() == MVKArgumentBufferMode::Off) {
+		if (stride.bufferIndex) {
+			mvkEnsureSize(target.bufferSizes, offsets.bufferIndex + stride.bufferIndex);
+			bindImplicitBufferData<ImplicitBufferData::BufferSize>(&target.bufferSizes[offsets.bufferIndex], setLayout, pushDesc->cpuBuffer, vkStage, varCount);
+		}
+	}
+}
+
 static void bindDescriptorSets(MVKImplicitBufferData& target,
                                MVKShaderStage stage,
                                MVKPipelineLayout* layout,
@@ -428,6 +447,7 @@ static void executeBindOp(id<MTLCommandEncoder> encoder,
                           const char* src, uint32_t count, size_t stride,
                           uint32_t target, const uint32_t* dynOffsets,
                           MVKResourceUsageStages useResourceStage,
+						  bool needsRobustBufferAccess2,
                           MVKStageResourceBits& exists,
                           MVKStageResourceBindings& bindings,
                           const MVKResourceBinder& RESTRICT binder) {
@@ -469,7 +489,25 @@ static void executeBindOp(id<MTLCommandEncoder> encoder,
 						binder.setBuffer(encoder, buffer, offset, target + i);
 					}
 				} else {
-					bindBuffer(encoder, static_cast<id<MTLBuffer>>(resource), offset, target + i, exists, bindings, binder);
+					id<MTLBuffer> mtlBuffer = static_cast<id<MTLBuffer>>(resource);
+					bool isNull = !mtlBuffer && mvkEncoder.getEnabledRobustness2Features().nullDescriptor;
+					bool isUndersized = mtlBuffer && needsRobustBufferAccess2 && (mtlBuffer.length < 64 * 1024);
+
+					if (isNull || isUndersized) {
+						constexpr uint32_t kSafeBufferSize = 64 * 1024;
+						auto* tempBuff = mvkEncoder.getTempMTLBuffer(kSafeBufferSize);
+						uint8_t* dst = (uint8_t*)tempBuff->getContents();
+						if (isUndersized && mtlBuffer.storageMode != MTLStorageModePrivate && offset < mtlBuffer.length) {
+							NSUInteger availableSize = mtlBuffer.length - offset;
+							memcpy(dst, (uint8_t*)mtlBuffer.contents + offset, availableSize);
+							memset(dst + availableSize, 0, kSafeBufferSize - availableSize);
+						} else {
+							memset(dst, 0, kSafeBufferSize);
+						}
+						mtlBuffer = tempBuff->_mtlBuffer;
+						offset = tempBuff->_offset;
+					}
+					bindBuffer(encoder, mtlBuffer, offset, target + i, exists, bindings, binder);
 				}
 				break;
 			}
@@ -533,6 +571,7 @@ static void executeBindOps(id<MTLCommandEncoder> encoder,
                            const MVKImplicitBufferData& implicitBufferData,
                            MVKArrayRef<const MVKDescriptorBindOperation> ops,
                            MVKResourceUsageStages useResourceStage,
+						   bool needsRobustBufferAccess2,
                            MVKStageResourceBits& exists,
                            MVKStageResourceBindings& bindings,
                            const MVKResourceBinder& RESTRICT binder) {
@@ -559,7 +598,7 @@ static void executeBindOps(id<MTLCommandEncoder> encoder,
 		switch (op.opcode) {
 #define CASE(x) case MVKDescriptorBindOperationCode::x: \
 				executeBindOp<MVKDescriptorBindOperationCode::x>( \
-					encoder, mvkEncoder, src, count, stride, target, dynOffs, useResourceStage, exists, bindings, binder); \
+					encoder, mvkEncoder, src, count, stride, target, dynOffs, useResourceStage, needsRobustBufferAccess2, exists, bindings, binder); \
 				break;
 			CASE(BindBytes)
 			CASE(BindBuffer)
@@ -637,7 +676,7 @@ static void bindMetalResources(id<MTLCommandEncoder> encoder,
 		bindBuffer(encoder, set->gpuBufferObject, set->gpuBufferOffset, idx, exists, bindings, binder);
 	}
 
-	executeBindOps(encoder, mvkEncoder, common, implicitBufferData, resources.bindScript.ops.contents(), useResourceStage, exists, bindings, binder);
+	executeBindOps(encoder, mvkEncoder, common, implicitBufferData, resources.bindScript.ops.contents(), useResourceStage, resources.needsRobustBufferAccess2, exists, bindings, binder);
 
 	MVKMetalSharedCommandEncoderState& mtlShared = mvkEncoder.getState().mtlShared();
 	if (resources.usesPhysicalStorageBufferAddresses && !isCompatible(mtlShared._gpuAddressableResourceStages, useResourceStage)) {
@@ -771,34 +810,80 @@ static void bindVulkanComputeToMetalCompute(
 
 template <bool DynamicStride>
 static void bindVertexBuffersTemplate(id<MTLCommandEncoder> encoder,
+									  MVKCommandEncoder& mvkEncoder,
                                       const MVKVulkanGraphicsCommandEncoderState& vkState,
                                       MVKStageResourceBits& exists,
                                       MVKStageResourceBindings& bindings,
                                       const MVKVertexBufferBinder& RESTRICT binder) {
 	MVKGraphicsPipeline* pipeline = vkState._pipeline;
+	bool needsRobustAccess = mvkEncoder.getEnabledFeatures().robustBufferAccess || pipeline->needsRobustVertexInputs();
+
+	auto getRobustBuffer = [&](id<MTLBuffer> mtlBuffer, VkDeviceSize& offset, uint32_t stride) {
+		if (!mtlBuffer && mvkEncoder.getEnabledRobustness2Features().nullDescriptor) {
+			uint32_t bufSize = stride > 0 ? stride : 16;
+			auto* tempBuff = mvkEncoder.getTempMTLBuffer(bufSize);
+			memset(tempBuff->getContents(), 0, bufSize);
+			offset = tempBuff->_offset;
+			return (id<MTLBuffer>)tempBuff->_mtlBuffer;
+		}
+		if (!needsRobustAccess || !mtlBuffer || stride == 0) { return mtlBuffer; }
+
+		VkDeviceSize bufferLength = mtlBuffer.length;
+		if (offset >= bufferLength) {
+			auto* paddedBuff = mvkEncoder.getTempMTLBuffer(stride);
+			memset(paddedBuff->getContents(), 0, stride);
+			offset = paddedBuff->_offset;
+			return (id<MTLBuffer>)paddedBuff->_mtlBuffer;
+		}
+
+		VkDeviceSize availableSize = bufferLength - offset;
+		if (availableSize < stride) {
+			auto* paddedBuff = mvkEncoder.getTempMTLBuffer(stride);
+			uint8_t* dst = (uint8_t*)paddedBuff->getContents();
+			if (mtlBuffer.storageMode != MTLStorageModePrivate) {
+				memcpy(dst, (uint8_t*)mtlBuffer.contents + offset, availableSize);
+				memset(dst + availableSize, 0, stride - availableSize);
+			} else {
+				memset(dst, 0, stride);
+			}
+			offset = paddedBuff->_offset;
+			return (id<MTLBuffer>)paddedBuff->_mtlBuffer;
+		}
+		return mtlBuffer;
+	};
+
 	for (size_t vkidx : pipeline->getVkVertexBuffers()) {
 		const auto& buffer = vkState._vertexBuffers[vkidx];
 		uint32_t idx = pipeline->getMetalBufferIndexForVertexAttributeBinding(static_cast<uint32_t>(vkidx));
-		bindVertexBuffer<DynamicStride>(encoder, buffer.mtlBuffer, buffer.offset, buffer.stride,
+		id<MTLBuffer> mtlBuffer = buffer.mtlBuffer;
+		VkDeviceSize offset = buffer.offset;
+		uint32_t stride = DynamicStride ? buffer.stride : pipeline->getVertexStride(static_cast<uint32_t>(vkidx));
+		mtlBuffer = getRobustBuffer(mtlBuffer, offset, stride);
+		bindVertexBuffer<DynamicStride>(encoder, mtlBuffer, offset, buffer.stride,
 		                                idx, exists, bindings, binder);
 	}
 	for (const auto& xltdBuffer : pipeline->getTranslatedVertexBindings()) {
 		const auto& buffer = vkState._vertexBuffers[xltdBuffer.binding];
 		uint32_t idx = pipeline->getMetalBufferIndexForVertexAttributeBinding(xltdBuffer.translationBinding);
-		bindVertexBuffer<DynamicStride>(encoder, buffer.mtlBuffer, buffer.offset + xltdBuffer.translationOffset, buffer.stride,
+		id<MTLBuffer> mtlBuffer = buffer.mtlBuffer;
+		VkDeviceSize offset = buffer.offset + xltdBuffer.translationOffset;
+		uint32_t stride = DynamicStride ? buffer.stride : pipeline->getVertexStride(xltdBuffer.binding);
+		mtlBuffer = getRobustBuffer(mtlBuffer, offset, stride);
+		bindVertexBuffer<DynamicStride>(encoder, mtlBuffer, offset, buffer.stride,
 		                                idx, exists, bindings, binder);
 	}
 }
 
 static void bindVertexBuffers(id<MTLCommandEncoder> encoder,
+							  MVKCommandEncoder& mvkEncoder,
                               const MVKVulkanGraphicsCommandEncoderState& vkState,
                               MVKStageResourceBits& exists,
                               MVKStageResourceBindings& bindings,
                               const MVKVertexBufferBinder& RESTRICT binder) {
 	if (vkState._pipeline->getDynamicStateFlags().has(MVKRenderStateFlag::VertexStride))
-		bindVertexBuffersTemplate<true> (encoder, vkState, exists, bindings, binder);
+		bindVertexBuffersTemplate<true> (encoder, mvkEncoder, vkState, exists, bindings, binder);
 	else
-		bindVertexBuffersTemplate<false>(encoder, vkState, exists, bindings, binder);
+		bindVertexBuffersTemplate<false>(encoder, mvkEncoder, vkState, exists, bindings, binder);
 }
 
 /** If the contents of an implicit buffer changes, call this to ensure that the contents will be rebound before the next draw. */
@@ -914,10 +999,13 @@ void MVKUseResourceHelper::bindAndResetCompute(id<MTLComputeCommandEncoder> enco
 #pragma mark - MVKVulkanCommonCommandEncoderState
 
 void MVKVulkanCommonEncoderState::ensurePushDescriptorSize(uint32_t size) {
-	if (size > _pushDescData.size()) {
+	size_t oldSize = _pushDescData.size();
+	if (size > oldSize) {
 		_pushDescData.resize(size);
-		_pushDescriptor.cpuBuffer = reinterpret_cast<char*>(_pushDescData.data());
+		size_t zeroStart = (oldSize == 0) ? 0 : oldSize;
+		memset(_pushDescData.data() + zeroStart, 0, size - zeroStart);
 	}
+	_pushDescriptor.cpuBuffer = reinterpret_cast<char*>(_pushDescData.data());
 }
 
 void MVKVulkanCommonEncoderState::setLayout(MVKPipelineLayout* layout) {
@@ -1406,7 +1494,7 @@ void MVKMetalGraphicsCommandEncoderState::prepareDraw(
 		bindVulkanGraphicsToMetalGraphics(encoder, mvkEncoder, vk, vkShared, *this, pipeline, kMVKShaderStageTessEval, MVKMetalGraphicsStage::Vertex);
 	} else {
 		bindVulkanGraphicsToMetalGraphics(encoder, mvkEncoder, vk, vkShared, *this, pipeline, kMVKShaderStageVertex,   MVKMetalGraphicsStage::Vertex);
-		bindVertexBuffers(encoder, vk, _exists.vertex(), _bindings.vertex(), MVKVertexBufferBinder::Vertex());
+		bindVertexBuffers(encoder, mvkEncoder, vk, _exists.vertex(), _bindings.vertex(), MVKVertexBufferBinder::Vertex());
 	}
 	bindVulkanGraphicsToMetalGraphics(encoder, mvkEncoder, vk, vkShared, *this, pipeline, kMVKShaderStageFragment, MVKMetalGraphicsStage::Fragment);
 	mvkEncoder.getState().mtlShared()._useResource.bindAndResetGraphics(encoder);
@@ -1609,7 +1697,7 @@ void MVKMetalComputeCommandEncoderState::prepareRenderDispatch(
 
 	bindVulkanGraphicsToMetalCompute(encoder, mvkEncoder, vk, vkShared, *this, pipeline, stage);
 	if (stage == kMVKShaderStageVertex)
-		bindVertexBuffers(encoder, vk, _exists, _bindings, MVKVertexBufferBinder::Compute());
+		bindVertexBuffers(encoder, mvkEncoder, vk, _exists, _bindings, MVKVertexBufferBinder::Compute());
 	mvkEncoder.getState().mtlShared()._useResource.bindAndResetCompute(encoder);
 }
 
@@ -1732,19 +1820,38 @@ MVKVulkanCommonEncoderState* MVKCommandEncoderState::getVkEncoderState(VkPipelin
 
 void MVKCommandEncoderState::pushDescriptorSet(VkPipelineBindPoint bindPoint, MVKPipelineLayout* layout, uint32_t set, uint32_t writeCount, const VkWriteDescriptorSet* writes) {
 	assert(layout->pushDescriptor() == set);
-	if (MVKVulkanCommonEncoderState* state = getVkEncoderState(bindPoint)) [[likely]] {
+	if (bindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS) {
 		MVKDescriptorSetLayout* dsl = layout->getDescriptorSetLayout(set);
-		state->ensurePushDescriptorSize(dsl->cpuSize());
-		mvkPushDescriptorSet(state->_pushDescriptor.cpuBuffer, dsl, writeCount, writes);
+		_vkGraphics.ensurePushDescriptorSize(dsl->cpuSize());
+		mvkPushDescriptorSet(_vkGraphics._pushDescriptor.cpuBuffer, dsl, writeCount, writes);
+		for (uint32_t i = 0; i <= kMVKShaderStageFragment; i++) {
+			MVKShaderStage stage = static_cast<MVKShaderStage>(i);
+			bindPushDescriptorBufferSizes(_vkGraphics._implicitBufferData[stage], stage, layout, set, &_vkGraphics._pushDescriptor);
+		}
+	} else if (bindPoint == VK_PIPELINE_BIND_POINT_COMPUTE) {
+		MVKDescriptorSetLayout* dsl = layout->getDescriptorSetLayout(set);
+		_vkCompute.ensurePushDescriptorSize(dsl->cpuSize());
+		mvkPushDescriptorSet(_vkCompute._pushDescriptor.cpuBuffer, dsl, writeCount, writes);
+		bindPushDescriptorBufferSizes(_vkCompute._implicitBufferData, kMVKShaderStageCompute, layout, set, &_vkCompute._pushDescriptor);
 	}
 }
 
 void MVKCommandEncoderState::pushDescriptorSet(MVKDescriptorUpdateTemplate* updateTemplate, MVKPipelineLayout* layout, uint32_t set, const void* data) {
 	assert(layout->pushDescriptor() == set);
-	if (MVKVulkanCommonEncoderState* state = getVkEncoderState(updateTemplate->getBindPoint())) [[likely]] {
+	VkPipelineBindPoint bindPoint = updateTemplate->getBindPoint();
+	if (bindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS) {
 		MVKDescriptorSetLayout* dsl = layout->getDescriptorSetLayout(set);
-		state->ensurePushDescriptorSize(dsl->cpuSize());
-		mvkPushDescriptorSetTemplate(state->_pushDescriptor.cpuBuffer, dsl, updateTemplate, data);
+		_vkGraphics.ensurePushDescriptorSize(dsl->cpuSize());
+		mvkPushDescriptorSetTemplate(_vkGraphics._pushDescriptor.cpuBuffer, dsl, updateTemplate, data);
+		for (uint32_t i = 0; i <= kMVKShaderStageFragment; i++) {
+			MVKShaderStage stage = static_cast<MVKShaderStage>(i);
+			bindPushDescriptorBufferSizes(_vkGraphics._implicitBufferData[stage], stage, layout, set, &_vkGraphics._pushDescriptor);
+		}
+	} else if (bindPoint == VK_PIPELINE_BIND_POINT_COMPUTE) {
+		MVKDescriptorSetLayout* dsl = layout->getDescriptorSetLayout(set);
+		_vkCompute.ensurePushDescriptorSize(dsl->cpuSize());
+		mvkPushDescriptorSetTemplate(_vkCompute._pushDescriptor.cpuBuffer, dsl, updateTemplate, data);
+		bindPushDescriptorBufferSizes(_vkCompute._implicitBufferData, kMVKShaderStageCompute, layout, set, &_vkCompute._pushDescriptor);
 	}
 }
 

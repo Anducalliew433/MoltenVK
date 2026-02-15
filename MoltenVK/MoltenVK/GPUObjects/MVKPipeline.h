@@ -233,6 +233,7 @@ struct MVKPipelineStageResourceInfo {
 	MVKPipelineBindScript bindScript;
 	MVKImplicitBufferBindings implicitBuffers;
 	bool usesPhysicalStorageBufferAddresses;
+	bool needsRobustBufferAccess2;
 	MVKStageResourceBits resources;
 };
 
@@ -313,10 +314,15 @@ public:
 	const MVKStaticBitSet<kMVKMaxBufferCount>& getVkVertexBuffers() const { return _vkVertexBuffers; }
 	/** Returns a list of the vertex buffers used by this pipeline by Metal buffer ID */
 	const MVKStaticBitSet<kMVKMaxBufferCount>& getMtlVertexBuffers() const { return _mtlVertexBuffers; }
+	/** Returns the stride for the given vertex buffer binding (only valid for static strides) */
+	uint32_t getVertexStride(uint32_t binding) const { return _vertexStrides[binding]; }
 	const VkViewport* getViewports() const { return _viewports; }
 	const VkRect2D* getScissors() const { return _scissors; }
 	const MTLSamplePosition* getSampleLocations() const { return _sampleLocations; }
 	const MTLPrimitiveTopologyClass getPrimitiveTopologyClass() const { return static_cast<MTLPrimitiveTopologyClass>(_primitiveTopologyClass); }
+
+	/** Returns true if this pipeline needs robust handling for undersized vertex inputs. */
+	bool needsRobustVertexInputs() const { return _needsRobustVertexInputs; }
 
 	/** Constructs an instance for the device and parent (which may be NULL). */
 	MVKGraphicsPipeline(MVKDevice* device,
@@ -383,6 +389,7 @@ protected:
 	std::unordered_map<uint32_t, id<MTLRenderPipelineState>> _multiviewMTLPipelineStates;
 	MVKStaticBitSet<kMVKMaxBufferCount> _vkVertexBuffers;
 	MVKStaticBitSet<kMVKMaxBufferCount> _mtlVertexBuffers;
+	uint32_t _vertexStrides[kMVKMaxBufferCount] = {};
 	MVKPipelineStageResourceInfo _stageResources[kMVKShaderStageFragment + 1] = {};
 
 	id<MTLComputePipelineState> _mtlTessVertexStageState = nil;
@@ -410,6 +417,7 @@ protected:
 	bool _isTessellationPipeline = false;
 	bool _inputAttachmentIsDSAttachment = false;
 	bool _hasRemappedAttachmentLocations = false;
+	bool _needsRobustVertexInputs = false;
 };
 
 

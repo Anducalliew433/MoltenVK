@@ -2229,7 +2229,14 @@ MVKImageView::MVKImageView(MVKDevice* device, const VkImageViewCreateInfo* pCrea
 		_subresourceRange.levelCount = _image->getMipLevelCount() - _subresourceRange.baseMipLevel;
 	}
 	if (_subresourceRange.layerCount == VK_REMAINING_ARRAY_LAYERS) {
-		_subresourceRange.layerCount = _image->getLayerCount() - _subresourceRange.baseArrayLayer;
+		// For 3D images with 2D array views, the "layers" are depth slices, not array layers.
+		// For 3D views of 3D images, layerCount should remain 1.
+		bool is2DArrayViewOf3D = (_image->getImageType() == VK_IMAGE_TYPE_3D &&
+								  (_mtlTextureType == MTLTextureType2DArray || _mtlTextureType == MTLTextureType2D));
+		uint32_t effectiveLayerCount = is2DArrayViewOf3D
+			? _image->getExtent3D().depth
+			: _image->getLayerCount();
+		_subresourceRange.layerCount = effectiveLayerCount - _subresourceRange.baseArrayLayer;
 	}
 
 	auto& mtlFeats = getMetalFeatures();

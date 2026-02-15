@@ -430,6 +430,7 @@ MVKPipeline::~MVKPipeline() {
 /** Populate a MVKStageResourceBits based on the resources used by the given shader info. */
 static void populateResourceUsage(MVKPipelineStageResourceInfo& dst, SPIRVToMSLConversionConfiguration& src, SPIRVToMSLConversionResultInfo& results, spv::ExecutionModel stage) {
 	dst.usesPhysicalStorageBufferAddresses = results.usesPhysicalStorageBufferAddressesCapability;
+	dst.needsRobustBufferAccess2 = src.options.mslOptions.robust_buffer_access2;
 	dst.implicitBuffers.needed |= MVKImplicitBufferList(MVKImplicitBuffer::Output,        results.needsOutputBuffer);
 	dst.implicitBuffers.needed |= MVKImplicitBufferList(MVKImplicitBuffer::PatchOutput,   results.needsPatchOutputBuffer);
 	dst.implicitBuffers.needed |= MVKImplicitBufferList(MVKImplicitBuffer::BufferSize,    results.needsBufferSizeBuffer);
@@ -606,6 +607,45 @@ static void warnIfUnsupportedRobustnessEnabled(MVKPipeline* pipeline, const T* p
 	}
 }
 
+// Determines if robust buffer access 2 should be enabled for a pipeline, checking both
+// device-wide features and per-pipeline/per-stage robustness settings.
+template <typename T>
+static bool shouldEnableRobustBufferAccess2(MVKPipeline* pipeline, const T* pCreateInfo,
+											const VkPipelineShaderStageCreateInfo* pShaderStage = nullptr) {
+	if (pipeline->getEnabledRobustness2Features().robustBufferAccess2) { return true; }
+
+	auto isRobust2 = [](const VkPipelineRobustnessCreateInfo* pRob) {
+		return pRob && (pRob->storageBuffers == VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2 ||
+						pRob->uniformBuffers == VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2);
+	};
+
+	if (pShaderStage && isRobust2(getRobustnessCreateInfo(pShaderStage))) { return true; }
+	return isRobust2(getRobustnessCreateInfo(pCreateInfo));
+}
+
+// Determines if robust image access 2 should be enabled for a pipeline.
+template <typename T>
+static bool shouldEnableRobustImageAccess2(MVKPipeline* pipeline, const T* pCreateInfo,
+										   const VkPipelineShaderStageCreateInfo* pShaderStage = nullptr) {
+	if (pipeline->getEnabledRobustness2Features().robustImageAccess2) { return true; }
+
+	auto isRobust2 = [](const VkPipelineRobustnessCreateInfo* pRob) {
+		return pRob && pRob->images == VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_ROBUST_IMAGE_ACCESS_2;
+	};
+
+	if (pShaderStage && isRobust2(getRobustnessCreateInfo(pShaderStage))) { return true; }
+	return isRobust2(getRobustnessCreateInfo(pCreateInfo));
+}
+
+// Determines if robust vertex inputs should be enabled for a pipeline.
+template <typename T>
+static bool shouldEnableRobustVertexInputs(MVKPipeline* pipeline, const T* pCreateInfo) {
+	if (pipeline->getEnabledRobustness2Features().robustBufferAccess2) { return true; }
+
+	const VkPipelineRobustnessCreateInfo* pRob = getRobustnessCreateInfo(pCreateInfo);
+	return pRob && pRob->vertexInputs == VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2;
+}
+
 static MVKShaderModule* getOrCreateShaderModule(MVKDevice* device, const VkPipelineShaderStageCreateInfo* pCreateInfo,
                                                    bool& ownsShaderModule) {
 	if (pCreateInfo && pCreateInfo->module == VK_NULL_HANDLE) {
@@ -731,6 +771,7 @@ MVKGraphicsPipeline::MVKGraphicsPipeline(MVKDevice* device,
 	}
 
 	warnIfUnsupportedRobustnessEnabled(this, pCreateInfo);
+	_needsRobustVertexInputs = shouldEnableRobustVertexInputs(this, pCreateInfo);
 
 	// Initialize feedback. The VALID bit must be initialized, either set or cleared.
 	// We'll set the VALID bits later, after successful compilation.
@@ -1493,6 +1534,8 @@ bool MVKGraphicsPipeline::addVertexShaderToPipeline(MTLRenderPipelineDescriptor*
 	shaderConfig.options.mslOptions.view_mask_buffer_index = implicit[MVKImplicitBuffer::ViewRange];
 	shaderConfig.options.mslOptions.capture_output_to_buffer = false;
 	shaderConfig.options.mslOptions.disable_rasterization = !_isRasterizing;
+	shaderConfig.options.mslOptions.robust_buffer_access2 = shouldEnableRobustBufferAccess2(this, pCreateInfo, pVertexSS);
+	shaderConfig.options.mslOptions.robust_image_access2 = shouldEnableRobustImageAccess2(this, pCreateInfo, pVertexSS);
     addVertexInputToShaderConversionConfig(shaderConfig, pCreateInfo);
 
 	MVKMTLFunction func = getMTLFunction(shaderConfig, pVertexSS, pVertexFB, _vertexModule, "Vertex");
@@ -1529,6 +1572,8 @@ bool MVKGraphicsPipeline::addVertexShaderToPipeline(MTLComputePipelineDescriptor
 	shaderConfig.options.mslOptions.capture_output_to_buffer = true;
 	shaderConfig.options.mslOptions.vertex_for_tessellation = true;
 	shaderConfig.options.mslOptions.disable_rasterization = true;
+	shaderConfig.options.mslOptions.robust_buffer_access2 = shouldEnableRobustBufferAccess2(this, pCreateInfo, pVertexSS);
+	shaderConfig.options.mslOptions.robust_image_access2 = shouldEnableRobustImageAccess2(this, pCreateInfo, pVertexSS);
     addVertexInputToShaderConversionConfig(shaderConfig, pCreateInfo);
 	addNextStageInputToShaderConversionConfig(shaderConfig, tcInputs);
 
@@ -1575,6 +1620,8 @@ bool MVKGraphicsPipeline::addTessCtlShaderToPipeline(MTLComputePipelineDescripto
 	shaderConfig.options.mslOptions.capture_output_to_buffer = true;
 	shaderConfig.options.mslOptions.multi_patch_workgroup = true;
 	shaderConfig.options.mslOptions.fixed_subgroup_size = mvkIsAnyFlagEnabled(pTessCtlSS->flags, VK_PIPELINE_SHADER_STAGE_CREATE_ALLOW_VARYING_SUBGROUP_SIZE_BIT) ? 0 : getMetalFeatures().maxSubgroupSize;
+	shaderConfig.options.mslOptions.robust_buffer_access2 = shouldEnableRobustBufferAccess2(this, pCreateInfo, pTessCtlSS);
+	shaderConfig.options.mslOptions.robust_image_access2 = shouldEnableRobustImageAccess2(this, pCreateInfo, pTessCtlSS);
 	addPrevStageOutputToShaderConversionConfig(shaderConfig, vtxOutputs);
 	addNextStageInputToShaderConversionConfig(shaderConfig, teInputs);
 
@@ -1611,6 +1658,8 @@ bool MVKGraphicsPipeline::addTessEvalShaderToPipeline(MTLRenderPipelineDescripto
 	shaderConfig.options.mslOptions.capture_output_to_buffer = false;
 	shaderConfig.options.mslOptions.raw_buffer_tese_input = true;
 	shaderConfig.options.mslOptions.disable_rasterization = !_isRasterizing;
+	shaderConfig.options.mslOptions.robust_buffer_access2 = shouldEnableRobustBufferAccess2(this, pCreateInfo, pTessEvalSS);
+	shaderConfig.options.mslOptions.robust_image_access2 = shouldEnableRobustImageAccess2(this, pCreateInfo, pTessEvalSS);
 	addPrevStageOutputToShaderConversionConfig(shaderConfig, tcOutputs);
 
 	MVKMTLFunction func = getMTLFunction(shaderConfig, pTessEvalSS, pTessEvalFB, _tessEvalModule, "Tessellation evaluation");
@@ -1649,6 +1698,8 @@ bool MVKGraphicsPipeline::addFragmentShaderToPipeline(MTLRenderPipelineDescripto
 		/* Enabling makes dEQP-VK.fragment_shader_interlock.basic.discard.image.pixel_ordered.1xaa.no_sample_shading.1024x1024 and similar tests fail. Requires investigation */
 		shaderConfig.options.mslOptions.force_fragment_with_side_effects_execution = false;
 		shaderConfig.options.mslOptions.input_attachment_is_ds_attachment = _inputAttachmentIsDSAttachment;
+		shaderConfig.options.mslOptions.robust_buffer_access2 = shouldEnableRobustBufferAccess2(this, pCreateInfo, pFragmentSS);
+		shaderConfig.options.mslOptions.robust_image_access2 = shouldEnableRobustImageAccess2(this, pCreateInfo, pFragmentSS);
 		if (mtlFeats.needsSampleDrefLodArrayWorkaround) {
 			shaderConfig.options.mslOptions.sample_dref_lod_array_as_grad = true;
 		}
@@ -1715,6 +1766,7 @@ bool MVKGraphicsPipeline::addVertexInputToPipeline(T* inputDesc,
 			uint32_t vbIdx = getMetalBufferIndexForVertexAttributeBinding(pVKVB->binding);
 			_mtlVertexBuffers.set(vbIdx);
 			_vkVertexBuffers.set(pVKVB->binding);
+			_vertexStrides[pVKVB->binding] = isVtxStrideStatic ? pVKVB->stride : 0;
 			auto vbDesc = inputDesc.layouts[vbIdx];
 			if (isVtxStrideStatic && pVKVB->stride == 0) {
 				// Stride can't be 0, it will be set later to attributes' maximum offset + size
@@ -1775,7 +1827,10 @@ bool MVKGraphicsPipeline::addVertexInputToPipeline(T* inputDesc,
 							uint32_t vbIdx = getMetalBufferIndexForVertexAttributeBinding(pVKVB->binding);
 							auto vbDesc = inputDesc.layouts[vbIdx];
 							uint32_t strideLowBound = vaOffset + attrSize;
-							if (vbDesc.stride < strideLowBound) vbDesc.stride = strideLowBound;
+							if (vbDesc.stride < strideLowBound) {
+								vbDesc.stride = strideLowBound;
+								_vertexStrides[pVKVB->binding] = strideLowBound;
+							}
 						} else if (vaOffset && vaOffset + attrSize > pVKVB->stride) {
 							// Move vertex attribute offset into the stride. This vertex attribute may be
 							// combined with other vertex attributes into the same translated buffer binding.
@@ -2476,6 +2531,8 @@ MVKMTLFunction MVKComputePipeline::getMTLFunction(const VkComputePipelineCreateI
 	shaderConfig.options.mslOptions.force_active_argument_buffer_resources = false;
 	shaderConfig.options.mslOptions.pad_argument_buffer_resources = useMetalArgBuff;
 	shaderConfig.options.mslOptions.argument_buffers_tier = (SPIRV_CROSS_NAMESPACE::CompilerMSL::Options::ArgumentBuffersTier)getMetalFeatures().argumentBuffersTier;
+	shaderConfig.options.mslOptions.robust_buffer_access2 = shouldEnableRobustBufferAccess2(this, pCreateInfo);
+	shaderConfig.options.mslOptions.robust_image_access2 = shouldEnableRobustImageAccess2(this, pCreateInfo);
 
 #if MVK_MACOS
     shaderConfig.options.mslOptions.emulate_subgroups = !mtlFeats.simdPermute;
@@ -2871,7 +2928,10 @@ namespace SPIRV_CROSS_NAMESPACE {
 				opt.agx_manual_cube_grad_fixup,
 				opt.force_fragment_with_side_effects_execution,
 				opt.input_attachment_is_ds_attachment,
-				opt.auto_disable_rasterization);
+				opt.auto_disable_rasterization,
+				opt.use_fast_math_pragmas,
+				opt.robust_buffer_access2,
+				opt.robust_image_access2);
 	}
 
 	template<class Archive>
@@ -2893,7 +2953,8 @@ namespace SPIRV_CROSS_NAMESPACE {
 				rb.count,
 				rb.msl_buffer,
 				rb.msl_texture,
-				rb.msl_sampler);
+				rb.msl_sampler,
+				rb.image_format_components);
 	}
 
 	template<class Archive>
@@ -3148,17 +3209,17 @@ static size_t mvkValidateCerealArchiveSize(size_t padByteCnt = 0) {
 
 void mvkValidateCeralArchiveDefinitions() {
 	[[maybe_unused]] size_t missingBytes = 0;
-	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(5);
+	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(6);
 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLShaderInterfaceVariable>();
 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLResourceBinding>();
 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLConstexprSampler>();
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVWorkgroupSizeDimension>(3);
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVEntryPoint>(20);						// Contains string
-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(23);			// Contains string
+	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(28);			// Contains string
 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLShaderInterfaceVariable>(3);
 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLResourceBinding>(2);
 	missingBytes += mvkValidateCerealArchiveSize<mvk::DescriptorBinding>();
-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(103);	// Contains collection
+	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(108);	// Contains collection
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionResultInfo>(42);		// Contains collection
 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLSpecializationMacroInfo>(22);			// Contains string
 	missingBytes += mvkValidateCerealArchiveSize<MVKShaderModuleKey>();

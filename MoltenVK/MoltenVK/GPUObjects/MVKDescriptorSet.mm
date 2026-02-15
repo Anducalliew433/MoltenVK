@@ -883,8 +883,20 @@ template <> struct MVKArgBufEncoder<MVKArgumentBufferMode::Metal3> {
 	MVKArgBufEncoder(id<MTLArgumentEncoder> enc, char* base): dst(reinterpret_cast<MVKGPUResource*>(base)) {}
 	void advance(size_t stride) { dst = reinterpret_cast<MVKGPUResource*>(reinterpret_cast<char*>(dst) + stride); }
 	void* constantData(size_t index) { return reinterpret_cast<char*>(dst) + index; }
-	void setTexture(id<MTLTexture> tex,       size_t index = 0) { dst[index].resource = tex.gpuResourceID; }
-	void setSampler(id<MTLSamplerState> samp, size_t index = 0) { dst[index].resource = samp.gpuResourceID; }
+	void setTexture(id<MTLTexture> tex, size_t index = 0) {
+		if (tex) {
+			dst[index].resource = tex.gpuResourceID;
+		} else {
+			setNullTexture(index);
+		}
+	}
+	void setSampler(id<MTLSamplerState> samp, size_t index = 0) {
+		if (samp) {
+			dst[index].resource = samp.gpuResourceID;
+		} else {
+			setNullSampler(index);
+		}
+	}
 	void setBuffer(id<MTLBuffer> buf, uint64_t offset, size_t index = 0) {
 		dst[index].gpuAddress = buf.gpuAddress + offset;
 	}
@@ -1033,8 +1045,10 @@ static void writeDescriptorSetGPUBuffer(
 				auto* buf = reinterpret_cast<MVKBuffer*>(info->buffer);
 				if (buf) {
 					enc.setBuffer(buf->getMTLBuffer(), buf->getMTLBufferOffset() + info->offset);
-					VkDeviceSize size = info->range == VK_WHOLE_SIZE ? buf->getByteCount() - info->offset : info->range;
-					reinterpret_cast<uint32_t*>(base + auxOffsets[binding.auxIndex])[i] = static_cast<uint32_t>(size);
+					VkDeviceSize bufSize = buf->getByteCount();
+					VkDeviceSize maxRange = info->offset < bufSize ? bufSize - info->offset : 0;
+					VkDeviceSize range = info->range == VK_WHOLE_SIZE ? maxRange : std::min(info->range, maxRange);
+					reinterpret_cast<uint32_t*>(base + auxOffsets[binding.auxIndex])[i] = static_cast<uint32_t>(range);
 				} else {
 					enc.setNullBuffer();
 					reinterpret_cast<uint32_t*>(base + auxOffsets[binding.auxIndex])[i] = 0;
@@ -1264,7 +1278,10 @@ static void writeDescriptorSetCPUBuffer(
 				if (auto* buf = reinterpret_cast<MVKBuffer*>(info->buffer)) {
 					desc->a = buf->getMTLBuffer();
 					desc->offset = buf->getMTLBufferOffset() + info->offset;
-					desc->meta.buffer = static_cast<uint32_t>(info->range == VK_WHOLE_SIZE ? buf->getByteCount() - info->offset : info->range);
+					VkDeviceSize bufSize = buf->getByteCount();
+					VkDeviceSize maxRange = info->offset < bufSize ? bufSize - info->offset : 0;
+					VkDeviceSize range = info->range == VK_WHOLE_SIZE ? maxRange : std::min(info->range, maxRange);
+					desc->meta.buffer = static_cast<uint32_t>(range);
 				} else {
 					*desc = {};
 				}
@@ -2219,6 +2236,7 @@ const VkDescriptorUpdateTemplateEntry* MVKDescriptorUpdateTemplate::getEntry(uin
 }
 
 uint32_t MVKDescriptorUpdateTemplate::getNumberOfEntries() const {
+	if (_size == 0) { return 0; }
 	return (uint32_t)_entries.size();
 }
 
