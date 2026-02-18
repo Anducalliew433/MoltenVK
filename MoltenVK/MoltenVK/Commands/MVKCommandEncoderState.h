@@ -37,6 +37,10 @@ struct MVKShaderImplicitRezBinding;
 enum class MVKMetalGraphicsStage {
 	Vertex,
 	Fragment,
+#if MVK_XCODE_14
+	Object,
+	Mesh,
+#endif
 	Count
 };
 
@@ -72,6 +76,10 @@ struct MVKResourceBinder {
 	enum class Stage {
 		Vertex   = static_cast<uint32_t>(MVKMetalGraphicsStage::Vertex),
 		Fragment = static_cast<uint32_t>(MVKMetalGraphicsStage::Fragment),
+#if MVK_XCODE_14
+		Object   = static_cast<uint32_t>(MVKMetalGraphicsStage::Object),
+		Mesh     = static_cast<uint32_t>(MVKMetalGraphicsStage::Mesh),
+#endif
 		Compute  = static_cast<uint32_t>(MVKMetalGraphicsStage::Count),
 		Count
 	};
@@ -79,6 +87,10 @@ struct MVKResourceBinder {
 	static const MVKResourceBinder& Get(MVKMetalGraphicsStage stage) { return Get(static_cast<Stage>(stage)); }
 	static const MVKResourceBinder& Vertex()   { return Get(Stage::Vertex); }
 	static const MVKResourceBinder& Fragment() { return Get(Stage::Fragment); }
+#if MVK_XCODE_14
+	static const MVKResourceBinder& Object()   { return Get(Stage::Object); }
+	static const MVKResourceBinder& Mesh()     { return Get(Stage::Mesh); }
+#endif
 	static const MVKResourceBinder& Compute()  { return Get(Stage::Compute); }
 };
 
@@ -105,11 +117,17 @@ struct MVKVertexBufferBinder {
 	}
 	enum class Stage {
 		Vertex,
+#if MVK_XCODE_14
+		Object,
+#endif
 		Compute,
 		Count
 	};
 	static const MVKVertexBufferBinder& Get(Stage stage) GCC_CONST;
 	static const MVKVertexBufferBinder& Vertex()  { return Get(Stage::Vertex); }
+#if MVK_XCODE_14
+	static const MVKVertexBufferBinder& Object()  { return Get(Stage::Object); }
+#endif
 	static const MVKVertexBufferBinder& Compute() { return Get(Stage::Compute); }
 };
 
@@ -129,6 +147,10 @@ struct MVKImplicitBufferData {
 enum class MVKResourceUsageStages : uint8_t {
 	Vertex   = static_cast<uint32_t>(MVKMetalGraphicsStage::Vertex),
 	Fragment = static_cast<uint32_t>(MVKMetalGraphicsStage::Fragment),
+#if MVK_XCODE_14
+	Object   = static_cast<uint32_t>(MVKMetalGraphicsStage::Object),
+	Mesh     = static_cast<uint32_t>(MVKMetalGraphicsStage::Mesh),
+#endif
 	All      = static_cast<uint32_t>(MVKMetalGraphicsStage::Count),
 	Count,
 	Compute  = 0, // Aliases with Render stages
@@ -271,6 +293,12 @@ struct MVKOnePerGraphicsStage: public MVKOnePerEnumEntry<T, MVKMetalGraphicsStag
 	const T& vertex()   const { return (*this)[MVKMetalGraphicsStage::Vertex]; }
 	      T& fragment()       { return (*this)[MVKMetalGraphicsStage::Fragment]; }
 	const T& fragment() const { return (*this)[MVKMetalGraphicsStage::Fragment]; }
+#if MVK_XCODE_14
+	      T& object()         { return (*this)[MVKMetalGraphicsStage::Object]; }
+	const T& object()   const { return (*this)[MVKMetalGraphicsStage::Object]; }
+	      T& mesh()           { return (*this)[MVKMetalGraphicsStage::Mesh]; }
+	const T& mesh()     const { return (*this)[MVKMetalGraphicsStage::Mesh]; }
+#endif
 };
 
 enum class MVKMetalRenderEncoderStateFlag {

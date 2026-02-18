@@ -1307,6 +1307,19 @@ MTLMeshRenderPipelineDescriptor* MVKGraphicsPipeline::newMTLMeshRenderPipelineDe
     if (!addVertexShaderToPipeline(plDesc, pCreateInfo, shaderConfig, pVertexSS, pVertexFB))
         return nullptr;
 
+    // For mesh pipelines, we need to track which vertex buffers are used
+    // so that bindVertexBuffers() can bind them to the object shader.
+    const VkPipelineVertexInputStateCreateInfo* pVI = pCreateInfo->pVertexInputState;
+    uint32_t vbCnt = pVI->vertexBindingDescriptionCount;
+    for (uint32_t i = 0; i < vbCnt; i++) {
+        const VkVertexInputBindingDescription* pVKVB = &pVI->pVertexBindingDescriptions[i];
+        if (shaderConfig.isVertexBufferUsed(pVKVB->binding)) {
+            uint32_t vbIdx = getMetalBufferIndexForVertexAttributeBinding(pVKVB->binding);
+            _mtlVertexBuffers.set(vbIdx);
+            _vkVertexBuffers.set(pVKVB->binding);
+        }
+    }
+
     std::string errorLog;
     SPIRVShaderOutputs vertexOutputs, geometryOutputs;
     if (!getShaderOutputs(((MVKShaderModule*)pVertexSS->module)->getSPIRV(), spv::ExecutionModelVertex, pVertexSS->pName, vertexOutputs, errorLog)) {
