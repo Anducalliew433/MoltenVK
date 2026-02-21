@@ -54,18 +54,36 @@ struct MVKResourceBinder {
 	SEL _setOffset;
 	SEL _setTexture;
 	SEL _setSampler;
+	SEL _setBytesDynamic;
+	SEL _setBufferDynamic;
+	SEL _setOffsetDynamic;
 	UseResource useResource;
 	template <typename T> static MVKResourceBinder Create() {
-		return { T::selSetBytes(), T::selSetBuffer(), T::selSetOffset(), T::selSetTexture(), T::selSetSampler(), T::useResource() };
+		return { T::selSetBytes(), T::selSetBuffer(), T::selSetOffset(), T::selSetTexture(), T::selSetSampler(), nullptr, nullptr, nullptr, T::useResource() };
+	}
+	template <typename T> static MVKResourceBinder CreateWithDynamicStride() {
+		return { T::selSetBytes(), T::selSetBuffer(), T::selSetOffset(), T::selSetTexture(), T::selSetSampler(), T::selSetBytesDynamic(), T::selSetBufferDynamic(), T::selSetOffsetDynamic(), T::useResource() };
 	}
 	void setBytes(id<MTLCommandEncoder> encoder, const void* bytes, NSUInteger length, NSUInteger index) const {
-		reinterpret_cast<void(*)(id, SEL, const void*, NSUInteger, NSUInteger)>(objc_msgSend)(encoder, _setBytes, bytes, length, index);
+		if (_setBytesDynamic) {
+			reinterpret_cast<void(*)(id, SEL, const void*, NSUInteger, NSUInteger, NSUInteger)>(objc_msgSend)(encoder, _setBytesDynamic, bytes, length, NSUIntegerMax /* MTLAttributeStrideStatic */, index);
+		} else {
+			reinterpret_cast<void(*)(id, SEL, const void*, NSUInteger, NSUInteger)>(objc_msgSend)(encoder, _setBytes, bytes, length, index);
+		}
 	}
 	void setBuffer(id<MTLCommandEncoder> encoder, id<MTLBuffer> buffer, NSUInteger offset, NSUInteger index) const {
-		reinterpret_cast<void(*)(id, SEL, id<MTLBuffer>, NSUInteger, NSUInteger)>(objc_msgSend)(encoder, _setBuffer, buffer, offset, index);
+		if (_setBufferDynamic) {
+			reinterpret_cast<void(*)(id, SEL, id<MTLBuffer>, NSUInteger, NSUInteger, NSUInteger)>(objc_msgSend)(encoder, _setBufferDynamic, buffer, offset, NSUIntegerMax /* MTLAttributeStrideStatic */, index);
+		} else {
+			reinterpret_cast<void(*)(id, SEL, id<MTLBuffer>, NSUInteger, NSUInteger)>(objc_msgSend)(encoder, _setBuffer, buffer, offset, index);
+		}
 	}
 	void setBufferOffset(id<MTLCommandEncoder> encoder, NSUInteger offset, NSUInteger index) const {
-		reinterpret_cast<void(*)(id, SEL, NSUInteger, NSUInteger)>(objc_msgSend)(encoder, _setOffset, offset, index);
+		if (_setOffsetDynamic) {
+			reinterpret_cast<void(*)(id, SEL, NSUInteger, NSUInteger, NSUInteger)>(objc_msgSend)(encoder, _setOffsetDynamic, offset, NSUIntegerMax /* MTLAttributeStrideStatic */, index);
+		} else {
+			reinterpret_cast<void(*)(id, SEL, NSUInteger, NSUInteger)>(objc_msgSend)(encoder, _setOffset, offset, index);
+		}
 	}
 	void setTexture(id<MTLCommandEncoder> encoder, id<MTLTexture> texture, NSUInteger index) const {
 		reinterpret_cast<void(*)(id, SEL, id<MTLTexture>, NSUInteger)>(objc_msgSend)(encoder, _setTexture, texture, index);

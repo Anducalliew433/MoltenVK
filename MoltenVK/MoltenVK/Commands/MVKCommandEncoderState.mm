@@ -98,6 +98,7 @@ struct MVKVertexBinder {
 	static SEL selSetTexture() { return @selector(setVertexTexture:atIndex:); }
 	static SEL selSetSampler() { return @selector(setVertexSamplerState:atIndex:); }
 	static MVKResourceBinder::UseResource useResource() { return useResourceGraphics; }
+	static SEL selSetBytesDynamic()  { return @selector(setVertexBytes:length:attributeStride:atIndex:); }
 	static SEL selSetBufferDynamic() { return @selector(setVertexBuffer:offset:attributeStride:atIndex:); }
 	static SEL selSetOffsetDynamic() { return @selector(setVertexBufferOffset:attributeStride:atIndex:); }
 	static void setBuffer(id<MTLRenderCommandEncoder> encoder, id<MTLBuffer> buffer, NSUInteger offset, NSUInteger index) {
@@ -228,7 +229,10 @@ template <typename T> struct ResourceBinderTable {
 
 static ResourceBinderTable<MVKResourceBinder> GenResourceBinders() {
 	ResourceBinderTable<MVKResourceBinder> res = {};
-	res[MVKResourceBinder::Stage::Vertex]   = MVKResourceBinder::Create<MVKVertexBinder>();
+	if (mvkOSVersionIsAtLeast(14.0, 17.0, 1.0))
+		res[MVKResourceBinder::Stage::Vertex] = MVKResourceBinder::CreateWithDynamicStride<MVKVertexBinder>();
+	else
+		res[MVKResourceBinder::Stage::Vertex] = MVKResourceBinder::Create<MVKVertexBinder>();
 	res[MVKResourceBinder::Stage::Fragment] = MVKResourceBinder::Create<MVKFragmentBinder>();
 #if MVK_XCODE_14
 	res[MVKResourceBinder::Stage::Object]   = MVKResourceBinder::Create<MVKObjectBinder>();
@@ -1235,10 +1239,10 @@ void MVKMetalGraphicsCommandEncoderState::bindFragmentSampler(id<MTLRenderComman
 	bindSampler(encoder, sampler, index, _exists.fragment(), _bindings.fragment(), MVKFragmentBinder());
 }
 void MVKMetalGraphicsCommandEncoderState::bindVertexBuffer(id<MTLRenderCommandEncoder> encoder, id<MTLBuffer> buffer, VkDeviceSize offset, NSUInteger index) {
-	bindBuffer(encoder, buffer, offset, index, _exists.vertex(), _bindings.vertex(), MVKVertexBinder());
+	bindBuffer(encoder, buffer, offset, index, _exists.vertex(), _bindings.vertex(), MVKResourceBinder::Vertex());
 }
 void MVKMetalGraphicsCommandEncoderState::bindVertexBytes(id<MTLRenderCommandEncoder> encoder, const void* data, size_t size, NSUInteger index) {
-	bindBytes(encoder, data, size, index, _exists.vertex(), _bindings.vertex(), MVKVertexBinder());
+	bindBytes(encoder, data, size, index, _exists.vertex(), _bindings.vertex(), MVKResourceBinder::Vertex());
 }
 void MVKMetalGraphicsCommandEncoderState::bindVertexTexture(id<MTLRenderCommandEncoder> encoder, id<MTLTexture> texture, NSUInteger index) {
 	bindTexture(encoder, texture, index, _exists.vertex(), _bindings.vertex(), MVKVertexBinder());
@@ -1969,6 +1973,7 @@ void MVKCommandEncoderState::bindIndexBuffer(const MVKIndexMTLBufferBinding& buf
 }
 
 void MVKCommandEncoderState::offsetZeroDivisorVertexBuffers(MVKCommandEncoder& mvkEncoder, MVKGraphicsStage stage, MVKGraphicsPipeline* pipeline, uint32_t firstInstance) {
+	bool useDynamicStride = pipeline->getDynamicStateFlags().has(MVKRenderStateFlag::VertexStride);
 	for (const auto& binding : pipeline->getZeroDivisorVertexBindings()) {
 		uint32_t mtlBuffIdx = pipeline->getMetalBufferIndexForVertexAttributeBinding(binding.first);
 		auto& buffer = _vkGraphics._vertexBuffers[binding.first];
@@ -1978,8 +1983,14 @@ void MVKCommandEncoderState::offsetZeroDivisorVertexBuffers(MVKCommandEncoder& m
 				                                                                                  atIndex: mtlBuffIdx];
 				break;
 			case kMVKGraphicsStageRasterization:
-				[mvkEncoder._mtlRenderEncoder setVertexBufferOffset:buffer.offset + firstInstance * binding.second
-				                                            atIndex:mtlBuffIdx];
+				if (useDynamicStride) {
+					[mvkEncoder._mtlRenderEncoder setVertexBufferOffset:buffer.offset + firstInstance * binding.second
+					                                    attributeStride:buffer.stride
+					                                            atIndex:mtlBuffIdx];
+				} else {
+					[mvkEncoder._mtlRenderEncoder setVertexBufferOffset:buffer.offset + firstInstance * binding.second
+					                                            atIndex:mtlBuffIdx];
+				}
 				break;
 			default:
 				assert(false); // If we hit this, something went wrong.
