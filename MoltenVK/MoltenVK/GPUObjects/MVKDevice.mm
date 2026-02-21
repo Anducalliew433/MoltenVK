@@ -787,7 +787,7 @@ void MVKPhysicalDevice::getFeatures(VkPhysicalDeviceFeatures2* features) {
 			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT: {
 				auto* transformFeedbackFeatures = (VkPhysicalDeviceTransformFeedbackFeaturesEXT*)next;
 				transformFeedbackFeatures->transformFeedback = true;
-				transformFeedbackFeatures->geometryStreams = false;
+				transformFeedbackFeatures->geometryStreams = true; // FIXME: lie about this for DXVK
 				break;
 			}
 			default:
